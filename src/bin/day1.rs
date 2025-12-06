@@ -11,7 +11,7 @@ fn main() {
     let mut dial = 50;
     let mut zeros = 0;
 
-    for turn in turns {
+    for turn in turns.clone() {
         
         dial += turn;
         dial %= 100;
@@ -21,6 +21,21 @@ fn main() {
     }
 
     println!("Stopped at zero {zeros} times");
+
+    let mut clicks = 0;
+    dial = 50;
+    for turn in turns {
+        let step = turn.signum();
+        let count = turn.abs();
+        for _ in 0..count {
+            dial += step;
+            dial %= 100;
+            if dial == 0 {
+                clicks += 1;
+            }
+        }
+    }
+    println!("Clicked zero {clicks} times");
 }
 
 fn parse_direction(turn: &str) -> i32 {
