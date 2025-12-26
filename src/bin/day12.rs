@@ -1,5 +1,20 @@
-use advent_25::input::get_input_ex;
-use std::fmt::Debug;
+use std::collections::HashMap;
+
+use advent_25::input::{get_input, get_input_ex};
+
+fn main() {
+    let input = get_input(12);
+    let (shape_input, region_input) = input.rsplit_once("\n\n").unwrap();
+    let shapes: Vec<_> = shape_input.split("\n\n").map(Shape::new).collect();
+
+    let regions: Vec<_> = region_input.lines().map(Region::new).collect();
+
+    let mut counts: HashMap<FitResult, i32> = HashMap::new();
+    for result in regions.iter().map(|r| would_fit(r, &shapes)) {
+        *counts.entry(result).or_insert(0) += 1;
+    }
+    dbg!(&counts);
+}
 
 #[derive(Clone)]
 struct Shape {
@@ -22,73 +37,8 @@ impl Shape {
         Self { shape }
     }
 
-    fn h_flip(&self) -> Self {
-        let mut shape = [[false; 3]; 3];
-        for row in 0..3 {
-            for col in 0..3 {
-                shape[row][col] = self.shape[row][2 - col];
-            }
-        }
-        Self { shape }
-    }
-
-    fn v_flip(&self) -> Self {
-        let mut shape = [[false; 3]; 3];
-        for row in 0..3 {
-            for col in 0..3 {
-                shape[row][col] = self.shape[2 - row][col];
-            }
-        }
-        Self { shape }
-    }
-
-    fn d_flip(&self) -> Self {
-        let mut shape = [[false; 3]; 3];
-        for row in 0..3 {
-            for col in 0..3 {
-                shape[row][col] = self.shape[col][row];
-            }
-        }
-        Self { shape }
-    }
-}
-
-impl Debug for Shape {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for line in self.shape {
-            for cell in line {
-                if cell {
-                    write!(f, "#").unwrap();
-                } else {
-                    write!(f, ".").unwrap();
-                }
-            }
-            writeln!(f).unwrap();
-        }
-        writeln!(f)
-    }
-}
-
-#[derive(Debug)]
-struct TransformedShape {
-    versions: [Shape; 8],
-}
-
-impl TransformedShape {
-    fn new(s: &str) -> Self {
-        let shape = Shape::new(s);
-
-        let versions = [
-            shape.clone(),
-            shape.clone().h_flip(),
-            shape.clone().v_flip(),
-            shape.clone().h_flip().v_flip(),
-            shape.clone().d_flip(),
-            shape.clone().h_flip().d_flip(),
-            shape.clone().v_flip().d_flip(),
-            shape.h_flip().v_flip().d_flip(),
-        ];
-        Self { versions }
+    fn count_filled(&self) -> i32 {
+        self.shape.as_flattened().iter().filter(|&&e| e).count() as i32
     }
 }
 
@@ -96,7 +46,7 @@ impl TransformedShape {
 struct Region {
     rows: i32,
     cols: i32,
-    required_shapes: Vec<i32>
+    required_shapes: Vec<i32>,
 }
 
 impl Region {
@@ -109,20 +59,45 @@ impl Region {
             required_shapes.push(count.parse().unwrap());
         }
         Self {
-            rows, cols, required_shapes
+            rows,
+            cols,
+            required_shapes,
         }
     }
 
-    fn fit(shapes: &[TransformedShape], cells: Vec<Vec<bool>>) -> bool {
-        for row in self.rows
+    const fn area(&self) -> i32 {
+        self.rows * self.cols
+    }
+
+    const fn area_3x3(&self) -> i32 {
+        9 * (self.rows / 3) * (self.cols / 3)
     }
 }
 
-fn main() {
-    let input = get_input_ex(12);
-    let (shape_input, region_input) = input.rsplit_once("\n\n").unwrap();
-    let shapes: Vec<_> = shape_input.split("\n\n").map(TransformedShape::new).collect();
-    
-    let regions: Vec<_> = region_input.lines().map(Region::new).collect();
-    dbg!(&regions);
+#[derive(PartialEq, Eq, Hash, Debug)]
+enum FitResult {
+    Fits,
+    DoesNotFit,
+    MaybeFits,
+}
+
+fn would_fit(region: &Region, shapes: &[Shape]) -> FitResult {
+    let region_area = region.area();
+    let region_3x3_area = region.area_3x3();
+    let no_overlap_required_area = region.required_shapes.iter().sum::<i32>() * 9;
+    let perfect_tiling_required_area = region
+        .required_shapes
+        .iter()
+        .enumerate()
+        .map(|(i, num)| shapes[i].count_filled() * num)
+        .sum();
+
+    if region_3x3_area >= no_overlap_required_area {
+        FitResult::Fits
+    } else if region_area < perfect_tiling_required_area {
+        FitResult::DoesNotFit
+    } else {
+        println!("Region area of {region_area} is between perfect tiling area {perfect_tiling_required_area} and no overlap area {no_overlap_required_area}");
+        FitResult::MaybeFits
+    }
 }

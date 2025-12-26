@@ -6,6 +6,8 @@ use std::{
 
 use advent_25::input::{get_input_lines, get_input_lines_ex};
 
+use rayon::prelude::*;
+
 type Point = (i64, i64);
 
 fn main() {
@@ -39,7 +41,7 @@ struct Edge {
 }
 
 impl Edge {
-    fn intersects(&self, point: &Point) -> bool {
+    fn contains(&self, point: &Point) -> bool {
         // Either matches x or y
         if self.p1.0 == self.p2.0 {
             if point.0 == self.p1.0 {
@@ -58,25 +60,63 @@ impl Edge {
         }
         false
     }
+
+    fn same_x(&self) -> bool {
+        if self.p1.0 == self.p2.0 {
+            true
+        } else if self.p1.1 == self.p2.1 {
+            false
+        } else {
+            panic!()
+        }
+    }
+
+    fn length(&self) -> i64 {
+        max((self.p1.1 - self.p2.1).abs(), (self.p1.0 - self.p2.0).abs())
+    }
+
+    fn intersects(&self, other: &Self) -> bool {
+        // Overlapping edges do not count as intersecting, and parallel edges cannot intersect
+        if self.same_x() == other.same_x() {
+            return false;
+        }
+
+        let intersection_point = if self.same_x() {
+            (self.p1.0, other.p1.1)
+        } else {
+            (other.p1.0, self.p1.1)
+        };
+
+        if self.contains(&intersection_point) && other.contains(&intersection_point) {
+            println!("  {self:?} intersects {other:?} at {intersection_point:?}");
+            return true;
+        }
+        false
+    }
 }
 
 struct Edges {
     /// edges where the 0 coord is the same
     edges: HashMap<i64, (i64, i64)>,
+
+    all_edges_raw: Vec<Edge>
 }
 
 impl Edges {
     fn new() -> Self {
         Self {
             edges: HashMap::new(),
+            all_edges_raw: Vec::new()
         }
     }
 
     fn push(&mut self, edge: &Edge) {
+        self.all_edges_raw.push(edge.clone());
         if edge.p1.0 == edge.p2.0 {
             let low = min(edge.p1.1, edge.p2.1);
             let high = max(edge.p1.1, edge.p2.1);
-            self.edges.insert(edge.p1.0, (low, high));
+            let existing = self.edges.insert(edge.p1.0, (low+1, high));
+            assert!(existing.is_none());
         } else if edge.p1.1 == edge.p2.1 {
             // who cares
         } else {
@@ -108,21 +148,65 @@ impl Rectangle {
     }
 
     fn points(&self) -> Vec<Point> {
+        // list of all points along edges
         let upper = min(self.c1.0, self.c2.0);
         let left = min(self.c1.1, self.c2.1);
         let lower = max(self.c1.0, self.c2.0);
         let right = max(self.c1.1, self.c2.1);
 
-        (upper..=lower)
-            .flat_map(|row| (left..=right).map(move |col| (row, col)))
-            .collect()
+        let top = (left..=right).map(|y| (upper, y));
+        let bottom = (left..=right).map(|y| (lower, y));
+        let leftside = (upper..=lower).map(|x| (x, left));
+        let rightside = (upper..=lower).map(|x| (x, right));
+
+        top.chain(bottom).chain(leftside).chain(rightside).collect()
+
+        // let upper = min(self.c1.0, self.c2.0);
+        // let left = min(self.c1.1, self.c2.1);
+        // let lower = max(self.c1.0, self.c2.0);
+        // let right = max(self.c1.1, self.c2.1);
+
+        // (upper..=lower)
+        //     .flat_map(|row| (left..=right).map(move |col| (row, col)))
+        //     .collect()
+    }
+
+    fn edges(&self) -> [Edge; 4] {
+        let upper = min(self.c1.0, self.c2.0);
+        let left = min(self.c1.1, self.c2.1);
+        let lower = max(self.c1.0, self.c2.0);
+        let right = max(self.c1.1, self.c2.1);
+
+        [
+            Edge {
+                p1: (upper, left),
+                p2: (upper, right),
+            },
+            Edge {
+                p1: (upper, right),
+                p2: (lower, right),
+            },
+            Edge {
+                p1: (lower, right),
+                p2: (lower, left),
+            },
+            Edge {
+                p1: (lower, left),
+                p2: (upper, left),
+            },
+        ]
     }
 
     fn test_within(&self, edges: &Edges) -> bool {
         for point in self.points() {
+            // first check if it's on an edge
+            if edges.all_edges_raw.iter().any(|e| e.contains(&point)) {
+                continue;
+            }
+            // then if it's not on an edge, test interiorness
             let crossings = edges.count_crossings(&point);
             if crossings % 2 == 0 {
-                println!("Rejecting {:?}", point);
+                // println!("Rejecting {point:?} with {crossings} crossings");
                 // Outside a polygon or not on an edge
                 return false;
             }
@@ -132,9 +216,18 @@ impl Rectangle {
     }
 
     fn interior_edges(&self, edges: &[Edge]) -> bool {
+        edges.iter().any(|e| {
+            self.point_interior(&e.p1)
+                || self.point_interior(&e.p2)
+                || (self.point_on_border_not_corner(&e.p1)
+                    || self.point_on_border_not_corner(&e.p2))
+        })
+    }
+
+    fn edges_intersect(&self, edges: &[Edge]) -> bool {
         edges
             .iter()
-            .any(|e| self.point_interior(&e.p1) || self.point_interior(&e.p2) || (self.point_on_border_not_corner(&e.p1) || self.point_on_border_not_corner(&e.p2)))
+            .any(|e| self.edges().iter().any(|se| se.intersects(e)))
     }
 
     fn point_interior(&self, point: &Point) -> bool {
@@ -179,7 +272,10 @@ fn part2(points: &[Point]) {
         edges.push(&edge);
     }
 
-    dbg!(&edges_raw);
+    edges.all_edges_raw.sort_by_key(|e| e.length());
+    edges.all_edges_raw.reverse();
+
+    // dbg!(&edges_raw);
 
     let mut possible_rectangles = Vec::new();
     for i in 0..points.len() {
@@ -193,16 +289,23 @@ fn part2(points: &[Point]) {
 
     println!("Largest rectangle: {:?}", possible_rectangles[0]);
     println!("{} total rectangles to check", possible_rectangles.len());
-    for rectangle in possible_rectangles {
-        println!("Testing {rectangle:?}");
-        // if rectangle.test_within(&edges) {
+    println!();
+    let largest_fully_covered_rectangle = possible_rectangles.par_iter().find_first(|rectangle| rectangle.test_within(&edges));
+        // println!("Testing {rectangle:?}");
+        // if (i%100) == 0 {
+        //     println!("Testing #{i}");
+        // }
+
+        
+
+        // if !rectangle.interior_edges(&edges_raw) {
         //     println!("Largest fully covered rectangle: {rectangle:?}");
         //     break;
         // }
 
-        if !rectangle.interior_edges(&edges_raw) {
-            println!("Largest fully covered rectangle: {rectangle:?}");
-            break;
-        }
-    }
+        // if !rectangle.edges_intersect(&edges_raw) {
+        println!("Largest fully covered rectangle: {largest_fully_covered_rectangle:?}");
+        //     break;
+        // }
+    
 }
